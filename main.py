@@ -56,7 +56,7 @@ async def cmd_start(message: types.Message):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Start Escrow", callback_data=CallbackActions(action="start_escrow").pack())],
         [InlineKeyboardButton(text="How it Works", url="https://t.me/darkexchangeton")],
-        [InlineKeyboardButton(text="Support", url="https://t.me/v1p3rtom")]
+        [InlineKeyboardButton(text="Support", url="https://t.me/v1p3rton")]
     ])
     await message.answer("Welcome to DarkExchange TON Escrow Bot.", reply_markup=keyboard)
 
