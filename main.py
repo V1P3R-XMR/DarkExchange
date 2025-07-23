@@ -109,3 +109,11 @@ async def send_payment(to_address, amount):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     asyncio.run(dp.start_polling(bot))
+    import threading, http.server, socketserver
+
+def keep_alive():
+    Handler = http.server.SimpleHTTPRequestHandler
+    with socketserver.TCPServer(("", 8080), Handler) as httpd:
+        httpd.serve_forever()
+
+threading.Thread(target=keep_alive).start()
