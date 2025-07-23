@@ -2,9 +2,13 @@ import asyncio
 from binascii import unhexlify
 from pytonlib.wallet import WalletV3R2
 from pytonlib.crypto.keypair import KeyPair
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Application, CallbackQueryHandler, ContextTypes, ConversationHandler, MessageHandler, filters, CommandHandler
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.filters.callback_data import CallbackData
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 import httpx
+import logging
 
 BOT_TOKEN = "8175684032:AAFbwljxZ0OMso8q7Wzm8HvW0PilFVxhH2Q"
 TON_CENTER_API_KEY = "9dae242569c3e85422df7c3dcbc5f9da391b8d3c2915cc100eb451337ca4f571"
@@ -12,7 +16,18 @@ TON_CENTER_API_URL = "https://toncenter.com/api/v2"
 ESCROW_PRIVATE_KEY_HEX = "49cb6e50b55a3f86417cffb7c6aa37daa178ee0ed3c829e4c01fda2a84e1cb23"
 FEE_WALLET_ADDRESS = "UQAg3mG5c-QFD_KQQBzJMkd94y_r5pkAFegBijQr3LEbBWZ2"
 
-WAIT_SELLER, WAIT_AMOUNT, WAIT_CONFIRM = range(3)
+logging.basicConfig(level=logging.INFO)
+
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
+
+class EscrowStates(StatesGroup):
+    waiting_for_seller = State()
+    waiting_for_amount = State()
+    waiting_for_confirm = State()
+
+class CallbackActions(CallbackData, prefix="action"):
+    action: str
 
 def derive_escrow_wallet():
     keypair = KeyPair(unhexlify(ESCROW_PRIVATE_KEY_HEX))
@@ -20,10 +35,14 @@ def derive_escrow_wallet():
 
 async def get_balance(address: str) -> int:
     async with httpx.AsyncClient() as client:
-        r = await client.get(f"{TON_CENTER_API_URL}/getAddressInformation", params={"api_key": TON_CENTER_API_KEY, "address": address})
-        d = r.json()
-        if d["ok"] and "balance" in d["result"]:
-            return int(d["result"]["balance"])
+        resp = await client.get(
+            f"{TON_CENTER_API_URL}/getAddressInformation",
+            params={"api_key": TON_CENTER_API_KEY, "address": address},
+            timeout=15
+        )
+        data = resp.json()
+        if data["ok"] and "balance" in data["result"]:
+            return int(data["result"]["balance"])
         return 0
 
 async def send_ton(wallet: WalletV3R2, to_address: str, amount: int, comment: bytes = b""):
@@ -32,62 +51,71 @@ async def send_ton(wallet: WalletV3R2, to_address: str, amount: int, comment: by
     tx = await wallet.send_transfer(transfer)
     return tx
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("Start Escrow", callback_data="start_escrow")],
-        [InlineKeyboardButton("How it Works", url="https://t.me/darkexchangeton")],
-        [InlineKeyboardButton("Support", url="https://t.me/v1p3rton")]
-    ]
-    await update.message.reply_text("Welcome to DarkExchange TON Escrow Bot.", reply_markup=InlineKeyboardMarkup(keyboard))
+@dp.message(commands=["start"])
+async def cmd_start(message: types.Message):
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Start Escrow", callback_data=CallbackActions(action="start_escrow").pack())],
+        [InlineKeyboardButton(text="How it Works", url="https://t.me/darkexchangeton")],
+        [InlineKeyboardButton(text="Support", url="https://t.me/v1p3rtom")]
+    ])
+    await message.answer("Welcome to DarkExchange TON Escrow Bot.", reply_markup=keyboard)
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    if update.callback_query.data == "start_escrow":
-        await update.callback_query.message.reply_text("Send SELLER TON wallet address (starts with UQ or EQ):")
-        return WAIT_SELLER
-    if update.callback_query.data == "cancel":
-        await update.callback_query.message.reply_text("Cancelled.")
-        return ConversationHandler.END
+@dp.callback_query(CallbackActions.filter())
+async def process_callback(callback: types.CallbackQuery, callback_data: CallbackActions, state: FSMContext):
+    await callback.answer()
+    if callback_data.action == "start_escrow":
+        await callback.message.answer("Send SELLER TON wallet address (starts with UQ or EQ):")
+        await state.set_state(EscrowStates.waiting_for_seller)
+    elif callback_data.action == "cancel":
+        await callback.message.answer("Operation cancelled.")
+        await state.clear()
 
-async def receive_seller(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    addr = update.message.text.strip()
+@dp.message(state=EscrowStates.waiting_for_seller)
+async def seller_received(message: types.Message, state: FSMContext):
+    addr = message.text.strip()
     if not (addr.startswith("UQ") or addr.startswith("EQ")):
-        await update.message.reply_text("Invalid address. Send a TON wallet address starting with UQ or EQ.")
-        return WAIT_SELLER
-    context.user_data["seller"] = addr
-    await update.message.reply_text("Enter amount in TON (e.g. 0.5):")
-    return WAIT_AMOUNT
+        await message.answer("Invalid TON wallet address. Must start with UQ or EQ. Try again:")
+        return
+    await state.update_data(seller_address=addr)
+    await message.answer("Enter amount in TON (e.g. 0.5):")
+    await state.set_state(EscrowStates.waiting_for_amount)
 
-async def receive_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@dp.message(state=EscrowStates.waiting_for_amount)
+async def amount_received(message: types.Message, state: FSMContext):
     try:
-        amount = float(update.message.text.strip())
+        amount = float(message.text.strip())
         if amount <= 0:
             raise ValueError
     except:
-        await update.message.reply_text("Invalid amount. Enter a positive number like 0.5")
-        return WAIT_AMOUNT
-    context.user_data["amount"] = amount
-    seller = context.user_data["seller"]
-    keyboard = [
-        [InlineKeyboardButton("Confirm & Pay", callback_data="confirm_pay")],
-        [InlineKeyboardButton("Cancel", callback_data="cancel")]
-    ]
-    await update.message.reply_text(f"Pay {amount:.6f} TON to seller:\n{seller}\nConfirm?", reply_markup=InlineKeyboardMarkup(keyboard))
-    return WAIT_CONFIRM
+        await message.answer("Invalid amount. Enter a positive number like 0.5")
+        return
+    await state.update_data(amount=amount)
+    data = await state.get_data()
+    seller = data["seller_address"]
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Confirm & Pay", callback_data=CallbackActions(action="confirm_pay").pack())],
+        [InlineKeyboardButton(text="Cancel", callback_data=CallbackActions(action="cancel").pack())]
+    ])
+    await message.answer(f"Pay {amount:.6f} TON to seller:\n{seller}\nConfirm?", reply_markup=keyboard)
+    await state.set_state(EscrowStates.waiting_for_confirm)
 
-async def confirm_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    seller = context.user_data.get("seller")
-    amount = context.user_data.get("amount")
+@dp.callback_query(CallbackActions.filter())
+async def confirm_payment(callback: types.CallbackQuery, callback_data: CallbackActions, state: FSMContext):
+    await callback.answer()
+    if callback_data.action != "confirm_pay":
+        return
+    data = await state.get_data()
+    seller = data.get("seller_address")
+    amount = data.get("amount")
     if not seller or not amount:
-        await update.callback_query.message.reply_text("Session expired. Please start again.")
-        return ConversationHandler.END
+        await callback.message.answer("Session expired. Please start again.")
+        await state.clear()
+        return
 
     wallet = derive_escrow_wallet()
     escrow_address = await wallet.get_address()
     prev_balance = await get_balance(escrow_address)
-
-    await update.callback_query.message.reply_text(f"Send {amount:.6f} TON to escrow:\n{escrow_address}\nWaiting up to 1 hour...")
+    await callback.message.answer(f"Send {amount:.6f} TON to escrow wallet:\n{escrow_address}\nWaiting up to 1 hour...")
 
     for _ in range(3600 // 5):
         current_balance = await get_balance(escrow_address)
@@ -95,47 +123,34 @@ async def confirm_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
             break
         await asyncio.sleep(5)
     else:
-        await update.callback_query.message.reply_text("Timeout. Payment not received.")
-        return ConversationHandler.END
+        await callback.message.answer("Timeout. Payment not received.")
+        await state.clear()
+        return
 
     amount_nanoton = int(amount * 1_000_000_000)
     received = current_balance - prev_balance
     if received < amount_nanoton:
-        await update.callback_query.message.reply_text("Received less than expected. Cancelled.")
-        return ConversationHandler.END
+        await callback.message.answer("Received less than expected. Cancelled.")
+        await state.clear()
+        return
 
     fee = amount_nanoton * 5 // 100
     seller_amount = amount_nanoton - fee
 
-    await update.callback_query.message.reply_text("Sending 95% to seller...")
+    await callback.message.answer("Sending 95% to seller...")
     await send_ton(wallet, seller, seller_amount, b"DarkExchange seller payout")
-
-    await update.callback_query.message.reply_text("Sending 5% fee...")
+    await callback.message.answer("Sending 5% fee...")
     await send_ton(wallet, FEE_WALLET_ADDRESS, fee, b"DarkExchange fee")
+    await callback.message.answer("Escrow complete. Thank you.")
+    await state.clear()
 
-    await update.callback_query.message.reply_text("Escrow complete. Thank you.")
-    return ConversationHandler.END
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Cancelled.")
-    return ConversationHandler.END
-
-def main():
-    app = Application.builder().token(BOT_TOKEN).build()
-    conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(button_handler, pattern="^start_escrow$")],
-        states={
-            WAIT_SELLER: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_seller)],
-            WAIT_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_amount)],
-            WAIT_CONFIRM: [CallbackQueryHandler(confirm_payment, pattern="^confirm_pay$"),
-                           CallbackQueryHandler(cancel, pattern="^cancel$")]
-        },
-        fallbacks=[CallbackQueryHandler(cancel, pattern="^cancel$")],
-        allow_reentry=True
-    )
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(conv)
-    app.run_polling()
+@dp.message()
+async def default_handler(message: types.Message):
+    await message.answer("Use /start to begin.")
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    from aiogram.fsm.storage.memory import MemoryStorage
+    storage = MemoryStorage()
+    dp.storage = storage
+    asyncio.run(dp.start_polling(bot))
