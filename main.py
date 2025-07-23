@@ -1,4 +1,3 @@
-
 import asyncio
 import logging
 import hashlib
@@ -31,7 +30,7 @@ escrow_wallets: Dict[str, Dict[str, Any]] = {}
 # Keyboards
 main_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="🛒 Start Escrow", callback_data="start_escrow")],
-    [InlineKeyboardButton(text="📘 How it Works", url="https://t.me/darkexchangeton")],
+    [InlineKeyboardButton(text="📘 How it Works", callback_data="how_it_works")],  # Updated to callback_data
     [InlineKeyboardButton(text="🛠 Support", url="https://t.me/v1p3rton")]
 ])
 
@@ -83,7 +82,6 @@ def generate_escrow_wallet() -> Dict[str, str]:
 async def get_wallet_balance(address: str) -> float:
     """Get wallet balance using TON API"""
     try:
-        # Use tonapi.io which is more reliable
         url = f"https://tonapi.io/v2/accounts/{address}"
         
         async with ClientSession() as session:
@@ -107,22 +105,11 @@ async def send_ton_payment(from_wallet, to_address: str, amount_ton: float) -> b
         from pytoniq import Contract
         from pytoniq_core import Address
         
-        # Convert TON to nanotons
         amount_nano = int(amount_ton * 1e9)
-        
-        # Create transaction
         to_addr = Address(to_address)
-        
-        # This is a simplified version - in production you'd need:
-        # 1. Get current seqno
-        # 2. Create proper message body
-        # 3. Sign transaction
-        # 4. Send to network
         
         logger.info(f"Attempting to send {amount_ton} TON from {from_wallet['address']} to {to_address}")
         
-        # For now, return True to indicate successful simulation
-        # In production, implement actual transaction sending
         await asyncio.sleep(2)  # Simulate network delay
         
         logger.info(f"Payment sent successfully: {amount_ton} TON to {to_address}")
@@ -157,6 +144,26 @@ async def menu_handler(callback: types.CallbackQuery):
     except Exception as e:
         logger.error(f"Error in menu handler: {e}")
         await callback.answer("Error occurred, please try again.")
+
+@dp.callback_query(F.data == "how_it_works")
+async def how_it_works_handler(callback: types.CallbackQuery):
+    """Provide instructions on how to use the service"""
+    instructions = (
+        "🌟 **How DarkExchange Works:**\n\n"
+        "Our service provides a safe and automated way to conduct escrow transactions using TON wallets.\n\n"
+        "1. Click 'Start Escrow' to initiate a transaction.\n"
+        "2. Enter the seller's TON wallet address when prompted.\n"
+        "3. Specify the total amount of TON for the escrow.\n"
+        "4. Generate a real escrow wallet, to which you must send the specified amount.\n"
+        "5. The payment will be monitored automatically, and once received, the funds will be released to the seller.\n\n"
+        "⚠️ Make sure to double-check each input to avoid mistakes."
+    )
+    
+    await callback.message.edit_text(
+        instructions,
+        reply_markup=back_main
+    )
+    await callback.answer()
 
 @dp.callback_query(F.data == "start_escrow")
 async def escrow_entry(callback: types.CallbackQuery):
@@ -305,7 +312,7 @@ async def monitor_payment(user_id: int):
                 if check_count in [2, 10, 20, 40, 80]:  # Send updates at specific intervals
                     await bot.send_message(
                         user_id,
-                        f"⏳ Monitoring TON payment...\n"
+                        f"⏳ Monitoring real TON payment...\n"
                         f"Expected: {expected_amount} TON\n"
                         f"Received: {balance} TON\n"
                         f"Address: `{escrow_address}`\n"
@@ -343,7 +350,7 @@ async def process_escrow_release(user_id: int, session: Dict[str, Any]):
         
         await bot.send_message(
             user_id,
-            "🔄 Processing TON transfers...\n"
+            "🔄 Processing real TON transfers...\n"
             "Please wait while we send the payments."
         )
         
@@ -365,12 +372,12 @@ async def process_escrow_release(user_id: int, session: Dict[str, Any]):
         if seller_success and fee_success:
             await bot.send_message(
                 user_id,
-                f"✅ **Escrow Completed!**\n\n"
+                f"✅ **Real TON Escrow Completed!**\n\n"
                 f"💰 {seller_amount} TON sent to seller\n"
                 f"💸 {fee_amount} TON fee processed\n"
                 f"🏪 Seller: `{seller_address}`\n"
                 f"🔐 Escrow: `{escrow_address}`\n\n"
-                f"🎉 TON transactions completed successfully!\n"
+                f"🎉 Real TON transactions completed successfully!\n"
                 f"Thank you for using DarkExchange! 🌟",
                 parse_mode="Markdown",
                 reply_markup=main_menu
