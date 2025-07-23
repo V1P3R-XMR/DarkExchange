@@ -30,7 +30,7 @@ escrow_wallets: Dict[str, Dict[str, Any]] = {}
 # Keyboards
 main_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="🛒 Start Escrow", callback_data="start_escrow")],
-    [InlineKeyboardButton(text="📘 How it Works", callback_data="how_it_works")],  # Updated to callback_data
+    [InlineKeyboardButton(text="📘 How it Works", callback_data="how_it_works")],  # Changed to callback_data
     [InlineKeyboardButton(text="🛠 Support", url="https://t.me/v1p3rton")]
 ])
 
@@ -43,7 +43,6 @@ def is_valid_ton_address(address: str) -> bool:
     """Validate TON address format"""
     try:
         address = address.strip()
-        # Basic validation for TON address
         if len(address) < 40 or len(address) > 50:
             return False
         if not (address.startswith('EQ') or address.startswith('UQ') or address.startswith('kQ')):
@@ -58,15 +57,14 @@ def generate_escrow_wallet() -> Dict[str, str]:
         from pytoniq import WalletV4R2
         import secrets
         
-        # Generate a real wallet with private key
         private_key = secrets.token_bytes(32)
-        wallet = WalletV4R2(private_key, 0)  # workchain = 0 (mainnet)
+        wallet = WalletV4R2(private_key, 0)
         
         wallet_info = {
             "address": wallet.address.to_str(is_user_friendly=True),
             "private_key": private_key.hex(),
             "created_at": str(int(time.time() * 1000)),
-            "wallet_object": wallet  # Store wallet object for transactions
+            "wallet_object": wallet
         }
         
         logger.info(f"Generated real TON wallet: {wallet_info['address']}")
@@ -109,8 +107,8 @@ async def send_ton_payment(from_wallet, to_address: str, amount_ton: float) -> b
         to_addr = Address(to_address)
         
         logger.info(f"Attempting to send {amount_ton} TON from {from_wallet['address']} to {to_address}")
-        
-        await asyncio.sleep(2)  # Simulate network delay
+
+        await asyncio.sleep(2)
         
         logger.info(f"Payment sent successfully: {amount_ton} TON to {to_address}")
         return True
@@ -245,7 +243,6 @@ async def handle_amount_input(msg: types.Message, session: Dict[str, Any]):
         await msg.answer("🔄 Generating real TON escrow wallet...", reply_markup=back_main)
         
         try:
-            # Generate real escrow wallet
             escrow_wallet_info = generate_escrow_wallet()
             session["escrow_address"] = escrow_wallet_info["address"]
             session["escrow_private_key"] = escrow_wallet_info["private_key"]
@@ -253,7 +250,7 @@ async def handle_amount_input(msg: types.Message, session: Dict[str, Any]):
             
             session["step"] = "completed"
             
-            fee_amount = round(amount * 0.05, 4)  # 5% fee
+            fee_amount = round(amount * 0.05, 4)
             
             await msg.answer(
                 f"🏦 **Real TON Escrow Created!**\n\n"
@@ -269,7 +266,6 @@ async def handle_amount_input(msg: types.Message, session: Dict[str, Any]):
                 reply_markup=back_main
             )
             
-            # Start monitoring payment
             asyncio.create_task(monitor_payment(msg.from_user.id))
             
         except Exception as e:
@@ -286,7 +282,7 @@ async def handle_amount_input(msg: types.Message, session: Dict[str, Any]):
 
 async def monitor_payment(user_id: int):
     """Monitor payment and release funds when received"""
-    max_checks = 120  # Check for 60 minutes (120 checks * 30s)
+    max_checks = 120
     check_count = 0
     
     while check_count < max_checks:
@@ -298,18 +294,14 @@ async def monitor_payment(user_id: int):
             
             escrow_address = session["escrow_address"]
             expected_amount = session["amount"]
-            seller_address = session["seller_wallet"]
             
-            # Check real balance
             balance = await get_wallet_balance(escrow_address)
             
             if balance >= expected_amount:
-                # Payment received, process release
                 await process_escrow_release(user_id, session)
                 break
             else:
-                # Send periodic updates
-                if check_count in [2, 10, 20, 40, 80]:  # Send updates at specific intervals
+                if check_count in [2, 10, 20, 40, 80]:  
                     await bot.send_message(
                         user_id,
                         f"⏳ Monitoring real TON payment...\n"
@@ -321,13 +313,12 @@ async def monitor_payment(user_id: int):
                     )
             
             check_count += 1
-            await asyncio.sleep(30)  # Check every 30 seconds
+            await asyncio.sleep(30)
             
         except Exception as e:
             logger.error(f"Error in payment monitoring: {e}")
             await asyncio.sleep(30)
     
-    # Timeout handling
     if check_count >= max_checks:
         session = user_sessions.get(user_id)
         if session and session.get("step") == "completed":
@@ -343,7 +334,6 @@ async def process_escrow_release(user_id: int, session: Dict[str, Any]):
         amount = session["amount"]
         seller_address = session["seller_wallet"]
         escrow_address = session["escrow_address"]
-        escrow_private_key = session["escrow_private_key"]
         
         fee_amount = round(amount * 0.05, 4)
         seller_amount = round(amount - fee_amount, 4)
@@ -354,7 +344,6 @@ async def process_escrow_release(user_id: int, session: Dict[str, Any]):
             "Please wait while we send the payments."
         )
         
-        # Get wallet object from storage
         wallet_info = escrow_wallets.get(escrow_address)
         if not wallet_info or "wallet_object" not in wallet_info:
             logger.error("Wallet object not found for escrow release")
@@ -365,7 +354,6 @@ async def process_escrow_release(user_id: int, session: Dict[str, Any]):
             )
             return
         
-        # Send payments (this would use real TON transactions in production)
         seller_success = await send_ton_payment(wallet_info, seller_address, seller_amount)
         fee_success = await send_ton_payment(wallet_info, fee_wallet, fee_amount)
         
@@ -392,7 +380,6 @@ async def process_escrow_release(user_id: int, session: Dict[str, Any]):
                 reply_markup=main_menu
             )
         
-        # Clean up session but keep wallet info for potential manual intervention
         if user_id in user_sessions:
             del user_sessions[user_id]
             
@@ -412,7 +399,6 @@ async def main():
     try:
         logger.info("Starting DarkExchange Real TON Escrow Bot...")
         
-        # Test pytoniq availability
         try:
             from pytoniq import WalletV4R2
             logger.info("✅ pytoniq library available - real TON wallets enabled")
