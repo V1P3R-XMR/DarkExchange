@@ -6,7 +6,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes, ConversationHandler, MessageHandler, filters, CommandHandler
 import httpx
 
-BOT_TOKEN = "7480001572:AAFFgR6MG_pSDcXEPn_2OxP43uM8nwsejs4"
+BOT_TOKEN = "8175684032:AAFbwljxZ0OMso8q7Wzm8HvW0PilFVxhH2Q"
 TON_CENTER_API_KEY = "9dae242569c3e85422df7c3dcbc5f9da391b8d3c2915cc100eb451337ca4f571"
 TON_CENTER_API_URL = "https://toncenter.com/api/v2"
 ESCROW_PRIVATE_KEY_HEX = "49cb6e50b55a3f86417cffb7c6aa37daa178ee0ed3c829e4c01fda2a84e1cb23"
